@@ -1,0 +1,36 @@
+services:
+  training:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    environment:
+      - PYTHONUNBUFFERED=1
+      - SPEECHCOMMANDS_ROOT=/workspace/data/speechcommands
+    command: python -m app.train
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    environment:
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8000:8000"
+    command: uvicorn app.api:app --host 0.0.0.0 --port 8000
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: pytest -q tests/test_api.py
