@@ -132,7 +132,18 @@ curl.exe http://localhost:8001/health
 docker rm -f kws-secure
 ```
 
-Workflow `../.github/workflows/ci.yml` запускає Ruff, будує multi-stage образ (3 епохи замість стандартних 4), стартує контейнер, перевіряє health, `/model-info` і реальний WAV із ЛР1. Quality gate встановлено на 45% accuracy — на 20 відсоткових пунктів вище випадкового рівня 25% для чотирьох класів; це gate базового smoke-набору, а не заміна повноцінної оцінки моделі. CI не публікує образ у зовнішній реєстр.
+Workflow `../.github/workflows/ci.yml` запускається вручну (`workflow_dispatch`) на Windows self-hosted runner-і. Він запускає Ruff, будує multi-stage образ (3 епохи замість стандартних 4), стартує контейнер, перевіряє health, `/model-info` і WAV-приклад із ЛР1. Quality gate встановлено на 45% accuracy — на 20 відсоткових пунктів вище випадкового рівня 25% для чотирьох класів; це gate базового smoke-набору, а не заміна повноцінної оцінки моделі. CI не публікує образ у зовнішній реєстр.
+
+### Реєстрація Windows self-hosted runner
+
+1. На GitHub відкрий репозиторій → **Settings → Actions → Runners → New self-hosted runner**, вибери **Windows x64**.
+2. На ноутбуці створи окрему папку, наприклад `C:\actions-runner`, відкрий PowerShell як адміністратор і виконай команди завантаження/розпакування, які GitHub показує на цій сторінці. Не публікуй і не надсилай нікому одноразовий registration token.
+3. У тій самій папці виконай згенеровану GitHub команду `.\config.cmd ...`, дотримуйся інструкцій, задай runner name і додай стандартні labels `self-hosted`, `Windows`, `X64`.
+4. Для першого запуску виконай `.\run.cmd` і залиш runner активним. Постійна інсталяція як Windows service потребує адміністративних прав; її можна налаштувати пізніше за офіційною інструкцією GitHub.
+5. Переконайся, що Docker Desktop запущений у режимі **Linux containers**, і перевір `docker version` та `docker info`. Runner має запускатися під тим самим Windows-акаунтом, який має доступ до Docker Desktop.
+6. На вкладці **Actions** відкрий workflow `lab2-container-ci`, натисни **Run workflow**. Оскільки workflow ручний, він не стартуватиме від pull request чи звичайного push.
+
+Під час build Docker Desktop може помітно використовувати пам'ять і диск: образи PyTorch великі. Закрий зайві програми перед запуском. Self-hosted runner виконує job локально, тому не запускай його workflow з неперевіреним кодом.
 
 ## Таблиця результатів для звіту
 
