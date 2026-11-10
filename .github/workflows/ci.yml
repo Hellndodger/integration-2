@@ -95,6 +95,7 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/workspace" \
             --volume "$HOME/.cache/speechcommands:/data:ro" \
             --workdir /workspace \
+            --user "$(id -u):$(id -g)" \
             --entrypoint python \
             speech-lab3-trainer:${GITHUB_SHA} \
             /workspace/lab3/scripts/prepare_golden.py \
