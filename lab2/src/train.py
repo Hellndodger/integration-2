@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import random
 import time
 from pathlib import Path
@@ -72,6 +73,9 @@ def train(args: argparse.Namespace) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     model_path = output_dir / "model.pt"
     torch.save(model.state_dict(), model_path)
+    (output_dir / "labels.json").write_text(
+        json.dumps(LABELS, indent=2), encoding="utf-8"
+    )
 
     metrics = {
         "dataset": "Google Speech Commands",
@@ -79,6 +83,7 @@ def train(args: argparse.Namespace) -> dict:
         "labels": LABELS,
         "architecture": "SpeechCNN",
         "model_version": args.model_version,
+        "git_commit": args.git_commit,
         "seed": args.seed,
         "epochs": args.epochs,
         "limit_per_class": args.limit_per_class,
@@ -107,6 +112,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--model-version", default="1.0.0")
+    parser.add_argument("--git-commit", default=os.environ.get("GIT_COMMIT", "unknown"))
     args = parser.parse_args()
     if args.epochs < 1 or args.limit_per_class < 1 or args.threads < 1:
         parser.error("--epochs, --limit-per-class, and --threads must be positive")

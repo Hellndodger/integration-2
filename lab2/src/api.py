@@ -61,6 +61,7 @@ def model_info() -> dict[str, Any]:
         "labels": app.state.labels,
         "model_size_kb": round(MODEL_PATH.stat().st_size / 1024, 2),
         "accuracy": metrics["accuracy"],
+        "git_commit": metrics.get("git_commit", "unknown"),
         "model_version": os.environ.get(
             "MODEL_VERSION", metrics.get("model_version", MODEL_VERSION)
         ),

@@ -1,11 +1,36 @@
-name: lab2-container-ci
+name: ML CI/CD pipeline
 
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      epochs:
+        description: Training epochs
+        type: number
+        default: 4
+        required: true
+      limit_per_class:
+        description: Maximum training examples per class and split
+        type: number
+        default: 50
+        required: true
+      publish:
+        description: Publish the verified image to GHCR
+        type: boolean
+        default: false
+        required: true
+
+permissions:
+  contents: read
 
 jobs:
-  build-and-smoke-test:
-    runs-on: [self-hosted, Windows, X64]
+  lint:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -13,98 +38,235 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Lint
-        shell: powershell
+      - name: Install lint and verification tools
+        run: python -m pip install --disable-pip-version-check ruff==0.11.8 requests==2.32.3
+
+      - name: Ruff and Python syntax
         run: |
-          python -m pip install ruff
-          ruff check lab2/src lab2/scripts
+          ruff check lab2/src lab2/scripts lab3/scripts
+          python -m compileall -q lab2/src lab2/scripts lab3/scripts
 
-      - name: Build multi-stage image
-        shell: powershell
+  train:
+    needs: lint
+    if: needs.lint.result == 'success'
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 90
+    env:
+      EPOCHS: ${{ inputs.epochs || 4 }}
+      LIMIT_PER_CLASS: ${{ inputs.limit_per_class || 50 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prepare output and persistent dataset cache
         run: |
-          docker build `
-            --build-arg EPOCHS=3 `
-            --build-arg MODEL_VERSION=1.0.0 `
-            --build-arg "VCS_REF=$env:GITHUB_SHA" `
-            --build-arg "BUILD_DATE=$((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))" `
-            -t "kws-api:$env:GITHUB_SHA" `
-            -f lab2/Dockerfile lab2
+          mkdir -p lab3/artifacts "$HOME/.cache/speechcommands"
 
-      - name: Run container
-        shell: powershell
+      - name: Build trainer image
+        run: docker build --target trainer --tag speech-lab3-trainer:${GITHUB_SHA} --file lab3/Dockerfile .
+
+      - name: Train and evaluate inside Docker
         run: |
-          docker rm -f kws 2>$null
-          docker run -d --name kws -p 8000:8000 "kws-api:$env:GITHUB_SHA"
+          set -o pipefail
+          docker run --rm \
+            --volume "$HOME/.cache/speechcommands:/data" \
+            --volume "$GITHUB_WORKSPACE/lab3/artifacts:/artifacts" \
+            speech-lab3-trainer:${GITHUB_SHA} \
+            --data-root /data \
+            --output-dir /artifacts \
+            --epochs "$EPOCHS" \
+            --limit-per-class "$LIMIT_PER_CLASS" \
+            --seed 42 \
+            --model-version "3.0.${GITHUB_RUN_NUMBER}" \
+            --git-commit "$GITHUB_SHA" \
+            2>&1 | tee lab3/artifacts/train.log
 
-      - name: Wait for healthy API
-        shell: powershell
+      - name: Check required training artifacts
         run: |
-          $deadline = (Get-Date).AddSeconds(120)
-          do {
-            try {
-              $response = Invoke-RestMethod http://127.0.0.1:8000/health -TimeoutSec 3
-              if ($response.status -eq "ok") {
-                Write-Host "API is ready."
-                exit 0
-              }
-            } catch {
-              Start-Sleep -Seconds 2
-            }
-          } while ((Get-Date) -lt $deadline)
+          test -s lab3/artifacts/model.pt
+          test -s lab3/artifacts/labels.json
+          test -s lab3/artifacts/metrics.json
+          cat lab3/artifacts/metrics.json
 
-          docker logs kws
-          throw "API did not become ready within 120 seconds."
-
-      - name: Smoke test API and accuracy gate
-        shell: powershell
+      - name: Prepare held-out golden samples
         run: |
-          $info = Invoke-RestMethod http://127.0.0.1:8000/model-info -TimeoutSec 10
-          if ($info.accuracy -lt 45) {
-            throw "Accuracy gate failed: $($info.accuracy)% is below 45%."
-          }
-          if ($info.model_size_kb -le 0) {
-            throw "Model size must be greater than zero."
-          }
+          python lab3/scripts/prepare_golden.py \
+            --data-root "$HOME/.cache/speechcommands" \
+            --output lab3/artifacts/golden
 
-          $predictionText = & curl.exe --fail --silent --show-error `
-            -F "file=@lab1/samples/yes.wav" `
-            http://127.0.0.1:8000/predict
-          if ($LASTEXITCODE -ne 0) {
-            throw "Prediction request failed."
-          }
-          $prediction = $predictionText | ConvertFrom-Json
-          $labels = @("yes", "no", "up", "down")
-          if ($prediction.label -notin $labels) {
-            throw "Unexpected prediction label: $($prediction.label)"
-          }
-          if ($prediction.confidence -lt 0 -or $prediction.confidence -gt 1) {
-            throw "Prediction confidence is outside the [0, 1] range."
-          }
-          if ($prediction.latency_ms -le 0) {
-            throw "Prediction latency must be greater than zero."
-          }
-          foreach ($label in $labels) {
-            if ($null -eq $prediction.probabilities.$label) {
-              throw "Prediction response is missing probability for '$label'."
-            }
-          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: training-results
+          path: lab3/artifacts/
+          if-no-files-found: error
+          retention-days: 7
 
-          Write-Host "Accuracy: $($info.accuracy)%"
-          Write-Host ($prediction | ConvertTo-Json -Compress)
-
-      - name: Show image and runtime sizes
+      - name: Remove trainer image
         if: always()
-        shell: powershell
+        run: docker image rm speech-lab3-trainer:${GITHUB_SHA} >/dev/null 2>&1 || true
+
+  verify:
+    needs: train
+    if: needs.train.result == 'success'
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: training-results
+          path: lab3/artifacts
+
+      - name: Install verification client
+        run: python -m pip install --disable-pip-version-check requests==2.32.3
+
+      - name: Build runtime image from trained artifacts
         run: |
-          docker images kws-api
-          docker stats --no-stream kws
+          docker build --target runtime \
+            --build-arg MODEL_VERSION="3.0.${GITHUB_RUN_NUMBER}" \
+            --build-arg VCS_REF="${GITHUB_SHA}" \
+            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --tag speech-lab3-api:${GITHUB_SHA} \
+            --file lab3/Dockerfile .
 
-      - name: Logs on failure
-        if: failure()
-        shell: powershell
-        run: docker logs kws
+      - name: Start API container
+        run: |
+          docker rm -f speech-lab3-api >/dev/null 2>&1 || true
+          docker run --detach --name speech-lab3-api \
+            --publish 8000:8000 \
+            speech-lab3-api:${GITHUB_SHA}
 
-      - name: Stop container
+      - name: Wait for health endpoint
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8000/health; then
+              echo
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs speech-lab3-api
+          exit 1
+
+      - name: Measure latency
+        run: |
+          python lab2/scripts/benchmark.py \
+            --url http://127.0.0.1:8000 \
+            --n 30 \
+            --warmup 5 \
+            --sample lab3/artifacts/golden/yes.wav \
+            --out lab3/artifacts/latency.json
+
+      - name: Verify API, golden samples, and quality gates
+        run: |
+          python lab3/scripts/verify.py \
+            --url http://127.0.0.1:8000 \
+            --samples lab3/artifacts/golden \
+            --metrics lab3/artifacts/metrics.json \
+            --latency lab3/artifacts/latency.json \
+            --output lab3/artifacts/verification.json \
+            --min-accuracy 45 \
+            --max-p95-ms 5000
+
+      - name: Stop API container
         if: always()
-        shell: powershell
-        run: docker rm -f kws 2>$null
+        run: docker rm -f speech-lab3-api >/dev/null 2>&1 || true
+
+      - name: Remove runtime image
+        if: always()
+        run: docker image rm speech-lab3-api:${GITHUB_SHA} >/dev/null 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verification-results
+          path: lab3/artifacts/
+          if-no-files-found: warn
+          retention-days: 7
+
+  build-push:
+    needs: verify
+    if: needs.verify.result == 'success'
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: verification-results
+          path: lab3/artifacts
+
+      - name: Build runtime image
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+          docker build --target runtime \
+            --build-arg MODEL_VERSION="3.0.${GITHUB_RUN_NUMBER}" \
+            --build-arg VCS_REF="${GITHUB_SHA}" \
+            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --tag "${IMAGE}:${GITHUB_SHA}" \
+            --file lab3/Dockerfile .
+          docker images "${IMAGE}"
+          docker history --no-trunc "${IMAGE}:${GITHUB_SHA}" \
+            | tee lab3/artifacts/docker-history.txt
+
+      - name: Log in to GitHub Container Registry
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+        run: echo "${GITHUB_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish verified image
+        id: publish
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+        run: |
+          docker push "${IMAGE}:${GITHUB_SHA}"
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            docker tag "${IMAGE}:${GITHUB_SHA}" "${IMAGE}:latest"
+            docker push "${IMAGE}:latest"
+          fi
+
+      - name: Create pipeline report and Job Summary
+        run: |
+          PUBLISHED=false
+          if [[ "${{ steps.publish.outcome }}" == "success" ]]; then PUBLISHED=true; fi
+          IMAGE_SIZE="$(docker image ls --format='{{.Size}}' "${IMAGE}:${GITHUB_SHA}")"
+          export IMAGE_SIZE PUBLISHED
+          python3 -c 'import json,os; json.dump({"size_display":os.environ["IMAGE_SIZE"],"published":os.environ["PUBLISHED"] == "true"}, open("lab3/artifacts/image-info.json","w"), indent=2)'
+          python3 lab3/scripts/write_summary.py --image "${IMAGE}:${GITHUB_SHA}" \
+            --output lab3/artifacts/ci-report.md | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove local published-image tags
+        if: always()
+        run: |
+          docker image rm "${IMAGE}:${GITHUB_SHA}" >/dev/null 2>&1 || true
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            docker image rm "${IMAGE}:latest" >/dev/null 2>&1 || true
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pipeline-report
+          path: |
+            lab3/artifacts/ci-report.md
+            lab3/artifacts/docker-history.txt
+            lab3/artifacts/image-info.json
+          if-no-files-found: warn
+          retention-days: 7

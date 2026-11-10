@@ -1,0 +1,18 @@
+{
+  "yes.wav": {
+    "label": "yes",
+    "source": "yes/bb05582b_nohash_3.wav"
+  },
+  "no.wav": {
+    "label": "no",
+    "source": "no/bb05582b_nohash_3.wav"
+  },
+  "up.wav": {
+    "label": "up",
+    "source": "up/bb05582b_nohash_3.wav"
+  },
+  "down.wav": {
+    "label": "down",
+    "source": "down/bb05582b_nohash_3.wav"
+  }
+}

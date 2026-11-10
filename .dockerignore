@@ -1,0 +1,12 @@
+.git
+**/.venv
+**/venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+lab1/data
+lab1/samples
+lab1/tests
+lab2/artifacts
+lab2/data
+*.tar.gz

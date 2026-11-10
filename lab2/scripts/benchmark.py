@@ -4,6 +4,7 @@ import json
 import statistics
 import time
 import wave
+from pathlib import Path
 
 import requests
 
@@ -38,9 +39,10 @@ def percentile(values: list[float], percentile_value: float) -> float:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Measure server and client API latency")
     parser.add_argument("--url", default="http://127.0.0.1:8000")
-    parser.add_argument("--requests", type=int, default=100)
+    parser.add_argument("--requests", "--n", dest="requests", type=int, default=100)
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--sample")
+    parser.add_argument("--out")
     args = parser.parse_args()
     if args.requests < 1 or args.warmup < 0:
         parser.error("--requests must be positive and --warmup cannot be negative")
@@ -79,7 +81,12 @@ def main() -> None:
         }
     result["requests"] = args.requests
     result["warmup_requests"] = args.warmup
-    print(json.dumps(result, indent=2))
+    output = json.dumps(result, indent=2)
+    print(output)
+    if args.out:
+        output_path = Path(args.out)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(f"{output}\n", encoding="utf-8")
 
 
 if __name__ == "__main__":
