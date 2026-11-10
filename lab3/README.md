@@ -13,7 +13,7 @@
 
 ## Локальне виконання у Docker
 
-Команди нижче для PowerShell із кореня репозиторію; потрібні Docker Desktop із Linux containers і розпакований датасет `lab1/data/speechcommands`.
+Команди нижче для PowerShell із кореня репозиторію; потрібні Docker Desktop із Linux containers і розпакований датасет `lab1/data/speechcommands`. Образи базуються на `python:3.11-slim-bookworm`, щоб не залежати від CPU-вимог Python tool-cache self-hosted runner-а.
 
 ```powershell
 New-Item -ItemType Directory -Force lab3\artifacts | Out-Null

@@ -1,6 +1,6 @@
 ARG PYTHON_VERSION=3.11
 
-FROM python:${PYTHON_VERSION}-slim AS trainer
+FROM python:${PYTHON_VERSION}-slim-bookworm AS trainer
 WORKDIR /app
 
 RUN apt-get update \
@@ -14,7 +14,7 @@ COPY lab2/src/ ./src/
 ENTRYPOINT ["python", "-m", "src.train"]
 CMD ["--data-root", "/data", "--output-dir", "/artifacts", "--epochs", "4", "--limit-per-class", "50", "--seed", "42"]
 
-FROM python:${PYTHON_VERSION}-slim AS runtime
+FROM python:${PYTHON_VERSION}-slim-bookworm AS runtime
 WORKDIR /app
 
 RUN apt-get update \
