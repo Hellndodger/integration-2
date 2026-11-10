@@ -45,11 +45,14 @@ jobs:
             python:3.11-slim-bookworm \
             -c 'pip install --no-cache-dir ruff==0.11.8 && ruff check lab2/src lab2/scripts lab3/scripts && python -m compileall -q lab2/src lab2/scripts lab3/scripts'
 
-  train:
+  pipeline:
     needs: lint
     if: needs.lint.result == 'success'
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 90
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
     env:
       EPOCHS: ${{ inputs.epochs || 4 }}
       LIMIT_PER_CLASS: ${{ inputs.limit_per_class || 50 }}
@@ -79,7 +82,7 @@ jobs:
             --git-commit "$GITHUB_SHA" \
             2>&1 | tee lab3/artifacts/train.log
 
-      - name: Check required training artifacts
+      - name: Check required training outputs
         run: |
           test -s lab3/artifacts/model.pt
           test -s lab3/artifacts/labels.json
@@ -99,29 +102,9 @@ jobs:
             --manifest /workspace/lab3/golden/expected.json \
             --output /workspace/lab3/artifacts/golden
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: training-results
-          path: lab3/artifacts/
-          if-no-files-found: error
-          retention-days: 7
-
       - name: Remove trainer image
         if: always()
         run: docker image rm speech-lab3-trainer:${GITHUB_SHA} >/dev/null 2>&1 || true
-
-  verify:
-    needs: train
-    if: needs.train.result == 'success'
-    runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: training-results
-          path: lab3/artifacts
 
       - name: Build runtime image from trained artifacts
         run: |
@@ -189,33 +172,9 @@ jobs:
         if: always()
         run: docker rm -f speech-lab3-api >/dev/null 2>&1 || true
 
-      - name: Remove runtime image
+      - name: Remove verification runtime image
         if: always()
         run: docker image rm speech-lab3-api:${GITHUB_SHA} >/dev/null 2>&1 || true
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: verification-results
-          path: lab3/artifacts/
-          if-no-files-found: warn
-          retention-days: 7
-
-  build-push:
-    needs: verify
-    if: needs.verify.result == 'success'
-    runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: verification-results
-          path: lab3/artifacts
 
       - name: Build runtime image
         run: |
@@ -271,14 +230,3 @@ jobs:
           if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
             docker image rm "${IMAGE}:latest" >/dev/null 2>&1 || true
           fi
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: pipeline-report
-          path: |
-            lab3/artifacts/ci-report.md
-            lab3/artifacts/docker-history.txt
-            lab3/artifacts/image-info.json
-          if-no-files-found: warn
-          retention-days: 7

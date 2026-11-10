@@ -1,11 +1,11 @@
 # Лабораторна робота №3 — CI/CD для аудіокласифікатора
 
-Робочий процес GitHub Actions розгортає модель із ЛР1/ЛР2 у чотири послідовні job-и:
+Робочий процес GitHub Actions розгортає модель із ЛР1/ЛР2 у два job-и:
 
 1. `lint` — Ruff і перевірка синтаксису.
-2. `train` — запуск окремого trainer-образу в Docker, створення `model.pt`, `labels.json`, `metrics.json` і `train.log`; артефакти передаються між job-ами.
-3. `verify` — складання runtime-образу, запуск контейнера, перевірка health/API/golden samples, обчислення latency та застосування quality gates.
-4. `build-push` — збірка та аналіз runtime-образу, формування звіту й публікація в GHCR для push у `main` (або вручну, якщо ввімкнено `publish`).
+2. `pipeline` — послідовне навчання в Docker, підготовка golden samples, перевірка API й latency, quality gates, збірка та аналіз runtime-образу, формування Job Summary і, за потреби, публікація в GHCR.
+
+Навчальні й verification-файли залишаються у workspace одного job-а; workflow не використовує GitHub Actions artifact storage. Це усуває залежність від квоти артефактів і зайві передачі файлів між job-ами.
 
 ## Безпека self-hosted runner-а
 
@@ -46,11 +46,10 @@ docker rm -f speech-lab3-api
 Після успішного workflow відкрийте GitHub → **Actions** → **ML CI/CD pipeline** → потрібний запуск:
 
 1. **Lint:** відкрийте job `lint`; зніміть успішні Ruff і compile кроки.
-2. **Навчання:** відкрийте `train`; зніміть Docker build/run та заключний JSON із метриками.
-3. **Артефакти:** на сторінці запуску прокрутіть до **Artifacts** і зніміть `training-results`, `verification-results`, `pipeline-report`.
-4. **Перевірка API:** відкрийте `verify`; зніміть зелений health/golden/quality gate і p95 latency із логів.
-5. **Job Summary:** на сторінці запуску відкрийте **Summary**; зніміть таблицю метрик та golden predictions.
-6. **Образ:** у `build-push` зніміть `docker images`/розмір і `docker history`; якщо `Published to GHCR` дорівнює true, додатково відкрийте **Packages** у репозиторії та зніміть тег образу.
-7. **Тригери:** для звіту зробіть окремі успішні запуски від push у `main`, `workflow_dispatch` і довіреного same-repository pull request. Не демонструйте fork PR як виконаний: він має бути skipped згідно з правилом безпеки.
+2. **Навчання:** відкрийте job `pipeline`; зніміть Docker build/run та заключний JSON із метриками.
+3. **Перевірка API:** у job `pipeline` зафіксуйте успішні health/golden/quality checks і p95 latency з логів.
+4. **Job Summary:** на сторінці запуску відкрийте **Summary**; зніміть таблицю метрик та golden predictions.
+5. **Образ:** у job `pipeline` зніміть вивід `docker images`/розмір і `docker history`; якщо `Published to GHCR` дорівнює true, додатково відкрийте **Packages** у репозиторії та зніміть тег образу.
+6. **Тригери:** для звіту зробіть окремі успішні запуски від push у `main`, `workflow_dispatch` і довіреного same-repository pull request. Не демонструйте fork PR як виконаний: він має бути skipped згідно з правилом безпеки.
 
-Не підмінюйте відсутні запуски скриншотами workflow-файлу: у звіті вказуйте лише фактично завершені події.
+GitHub Actions artifact storage не використовується; результати показуються у логах і Job Summary. Не підмінюйте відсутні запуски скриншотами workflow-файлу: у звіті вказуйте лише фактично завершені події.
