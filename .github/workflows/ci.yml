@@ -91,17 +91,29 @@ jobs:
 
       - name: Prepare held-out golden samples
         run: |
-          docker run --rm \
-            --volume "$GITHUB_WORKSPACE:/workspace" \
+          set -euo pipefail
+          container="speech-lab3-golden-${GITHUB_RUN_ID}"
+          docker rm -f "$container" >/dev/null 2>&1 || true
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          mkdir -p lab3/artifacts/golden
+          docker create --name "$container" \
+            --volume "$GITHUB_WORKSPACE/lab3/scripts/prepare_golden.py:/prepare_golden.py:ro" \
+            --volume "$GITHUB_WORKSPACE/lab3/golden/expected.json:/expected.json:ro" \
             --volume "$HOME/.cache/speechcommands:/data:ro" \
-            --workdir /workspace \
-            --user "$(id -u):$(id -g)" \
             --entrypoint python \
             speech-lab3-trainer:${GITHUB_SHA} \
-            /workspace/lab3/scripts/prepare_golden.py \
+            /prepare_golden.py \
             --data-root /data \
-            --manifest /workspace/lab3/golden/expected.json \
-            --output /workspace/lab3/artifacts/golden
+            --manifest /expected.json \
+            --output /tmp/golden
+          docker start --attach "$container"
+          test "$(docker inspect --format='{{.State.ExitCode}}' "$container")" -eq 0
+          docker cp "$container:/tmp/golden/." lab3/artifacts/golden/
+          test -s lab3/artifacts/golden/expected.json
+          test -s lab3/artifacts/golden/yes.wav
+          test -s lab3/artifacts/golden/no.wav
+          test -s lab3/artifacts/golden/up.wav
+          test -s lab3/artifacts/golden/down.wav
 
       - name: Remove trainer image
         if: always()
