@@ -1,5 +1,1 @@
-id ubuntu
-getent group docker
-ls -l /var/run/docker.sock
-sudo -u ubuntu -H bash -lc 'id; docker ps'
-cd /home/ubuntu/Desktop/actions-runner && sudo ./svc.sh status
+sudo chown -R ubuntu:ubuntu /home/ubuntu/Desktop/actions-runner/_work/integration-2/integration-2/lab3/artifacts
